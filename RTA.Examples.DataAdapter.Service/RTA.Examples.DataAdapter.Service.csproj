@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>net5.0</TargetFramework>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Data.Sqlite" Version="5.0.6" />
+		<PackageReference Include="Microsoft.Data.Sqlite.Core" Version="5.0.6" />
+		<PackageReference Include="MAT.OCS.RTA.Services.AspNetCore" Version="0.7.0-CI-20210603-175800" />
+		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="0.7.0-CI-20210603-175800" />
+	</ItemGroup>
+
+</Project>

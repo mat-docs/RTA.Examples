@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net5.0</TargetFramework>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="MAT.OCS.RTA.Cache.Redis" Version="0.7.0-CI-20210603-175800" />
+		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="0.7.0-CI-20210603-175800" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\RTA.Examples.Util\RTA.Examples.Util.csproj" />
+	</ItemGroup>
+
+</Project>
