@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="Program.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -42,10 +45,11 @@ namespace RTA.Examples.Influx
             var durationNanos = TimeSpan.FromMinutes(10).Ticks * 100;
             var intervalNanos = TimeSpan.FromMilliseconds(10).Ticks * 100;
 
-            var dataIdentity = FormatDataIdentity(sessionIdentity);
+            var sessionTag = sessionIdentity;
+            var dataIdentity = FormatDataIdentity(sessionTag);
 
             await WriteDataAsync(
-                influxUri, dataIdentity, startNanos, durationNanos, intervalNanos);
+                influxUri, sessionTag, startNanos, durationNanos, intervalNanos);
 
             await WriteSchemaMappingAsync(schemaMappingClient, dataIdentity);
 
@@ -59,14 +63,14 @@ namespace RTA.Examples.Influx
             Console.WriteLine(sessionIdentity);
         }
 
-        private static string FormatDataIdentity(string sessionIdentity)
+        private static string FormatDataIdentity(string sessionTag)
         {
-            return $"{SessionTag}='{sessionIdentity}'";
+            return $"{SessionTag}='{sessionTag}'";
         }
 
         private static async Task WriteDataAsync(
             Uri influxDbUri,
-            string sessionTagExpression,
+            string sessionTag,
             long startNanos,
             long durationNanos,
             long intervalNanos)
@@ -78,19 +82,22 @@ namespace RTA.Examples.Influx
             }.Uri;
 
             // note that longer sessions may need to be split into multiple requests
-            var request = (HttpWebRequest)WebRequest.Create(writeUri);
+            var request = (HttpWebRequest) WebRequest.Create(writeUri);
             request.Method = "POST";
             request.SendChunked = true;
 
             await using (var stream = await request.GetRequestStreamAsync())
-            await using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" })
+            await using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) {NewLine = "\n"})
             {
                 var lineBuffer = new StringBuilder();
                 foreach (var (timestamp, values) in GenerateData(startNanos, durationNanos, intervalNanos))
                 {
                     lineBuffer.Append(Measurement);
                     lineBuffer.Append(',');
-                    lineBuffer.Append(sessionTagExpression);
+                    lineBuffer.Append(SessionTag);
+                    lineBuffer.Append('=');
+                    lineBuffer.Append(sessionTag);
+                    
                     lineBuffer.Append(' ');
 
                     for (var f = 0; f < Fields.Length; f++)
@@ -226,14 +233,11 @@ namespace RTA.Examples.Influx
                 CreateIfNotExists = new CreateOrUpdateSessionRequest.Types.CreateIfNotExists
                 {
                     Identifier = $"Influx Demo {timestamp:f}",
-                    Timestamp = timestamp.ToString("O")
+                    Timestamp = timestamp.ToString("O"),
+                    State = (int) SessionState.Closed
                 },
                 Updates =
                 {
-                    new SessionUpdate
-                    {
-                        SetState = (int) SessionState.Closed
-                    },
                     new SessionUpdate
                     {
                         SetType = "influx"
@@ -241,7 +245,7 @@ namespace RTA.Examples.Influx
                     new SessionUpdate
                     {
                         // inclusive timestamps
-                        SetTimeRange = new SessionUpdate.Types.TimeRange()
+                        SetTimeRange = new()
                         {
                             StartTime = startNanos,
                             EndTime = startNanos + durationNanos - intervalNanos
@@ -255,7 +259,7 @@ namespace RTA.Examples.Influx
                             {
                                 new ConfigBinding
                                 {
-                                    ConfigIdentifier = configIdentifier
+                                    Identifier = configIdentifier
                                 }
                             }
                         }

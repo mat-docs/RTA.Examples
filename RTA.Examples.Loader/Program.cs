@@ -1,11 +1,15 @@
-﻿using System;
+﻿// <copyright file="Program.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
+using Grpc.Core;
 using Grpc.Net.Client;
 using MAT.OCS.Configuration;
 using MAT.OCS.Configuration.Builder;
-using MAT.OCS.RTA.Model;
 using MAT.OCS.RTA.Model.Data;
 using MAT.OCS.RTA.Model.Net;
 using MAT.OCS.RTA.Toolkit.API.ConfigService;
@@ -62,7 +66,9 @@ namespace RTA.Examples.Loader
 
             using var dataStream = dataClient.WriteDataStream();
             var requestStream = dataStream.RequestStream;
-            await requestStream.WriteAsync(new WriteDataStreamRequest
+            var responseStream = dataStream.ResponseStream;
+
+            await requestStream.WriteAsync(new WriteDataStreamMessage
             {
                 DataIdentity = dataIdentity
             });
@@ -74,8 +80,8 @@ namespace RTA.Examples.Loader
                     var signal = signals[f];
                     for (var t = 0; t < burstLength; t++)
                     {
-                        var timeNanos = startNanos + offset + t * durationNanos;
-                        burstSamples[t] = (short)signal[timeNanos]; // short precision for this demo
+                        var timeOffsetNanos = offset + t * intervalNanos;
+                        burstSamples[t] = (short) signal[timeOffsetNanos]; // short precision for this demo
                     }
 
                     var burst = new PeriodicData
@@ -87,7 +93,7 @@ namespace RTA.Examples.Loader
                         Buffer = ByteString.CopyFrom(MemoryMarshal.AsBytes(burstSamples.AsSpan()))
                     };
 
-                    await requestStream.WriteAsync(new WriteDataStreamRequest
+                    await requestStream.WriteAsync(new WriteDataStreamMessage
                     {
                         PeriodicData = burst
                     });
@@ -98,6 +104,16 @@ namespace RTA.Examples.Loader
                     Console.Write(".");
                 }
             }
+
+            // MUST do both these steps for the write to complete:
+            // refer to https://docs.microsoft.com/en-us/aspnet/core/grpc/client?view=aspnetcore-5.0#bi-directional-streaming-call
+
+            // 1. complete request stream
+            await requestStream.CompleteAsync();
+
+            // 2. drain response stream (can also be done in a background task, or interleaved)
+            // (no responses expected since no flush tokens were sent)
+            await foreach (var _ in responseStream.ReadAllAsync());
 
             Console.WriteLine();
         }
@@ -163,10 +179,6 @@ namespace RTA.Examples.Loader
                 {
                     new SessionUpdate
                     {
-                        SetState = (int) SessionState.Closed
-                    },
-                    new SessionUpdate
-                    {
                         SetType = "rta"
                     },
                     new SessionUpdate
@@ -186,14 +198,13 @@ namespace RTA.Examples.Loader
                             {
                                 new ConfigBinding
                                 {
-                                    ConfigIdentifier = configIdentifier
+                                    Identifier = configIdentifier
                                 }
                             }
                         }
                     }
                 }
             });
-
         }
     }
 }

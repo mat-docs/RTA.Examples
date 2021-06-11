@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="Program.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -75,16 +78,18 @@ namespace RTA.Examples.DataAdapter.GeneratorIndexer
                     {
                         new SessionUpdate
                         {
-                            SetState = (int) SessionState.Closed
-                        },
-                        new SessionUpdate
-                        {
                             SetType = "sqlite"
                         },
                         new SessionUpdate
                         {
                             // AddRange is an extension method
-                            PutDetails = new SessionUpdate.Types.SessionDetailsList().AddRange(details)
+                            SetDetails = new()
+                            {
+                                Details =
+                                {
+                                    details
+                                }
+                            }
                         },
                         new SessionUpdate
                         {
@@ -94,7 +99,7 @@ namespace RTA.Examples.DataAdapter.GeneratorIndexer
                                 {
                                     new ConfigBinding
                                     {
-                                        ConfigIdentifier = configIdentifier
+                                        Identifier = configIdentifier
                                     }
                                 }
                             }
@@ -146,7 +151,9 @@ namespace RTA.Examples.DataAdapter.GeneratorIndexer
         ///     Scans for *.sqlite files and reads the <c>properties</c> table.
         /// </summary>
         /// <returns>Metadata and session details.</returns>
-        private static async IAsyncEnumerable<(string Path, string Timestamp, string Identifier, Dictionary<string, string> Details, SessionTimeRange? timeRange)> FindFilesAsync()
+        private static async
+            IAsyncEnumerable<(string Path, string Timestamp, string Identifier, Dictionary<string, string> Details,
+                SessionTimeRange? timeRange)> FindFilesAsync()
         {
             var paths = Directory.EnumerateFiles(Environment.CurrentDirectory, "*.sqlite");
             foreach (var path in paths)
@@ -217,7 +224,6 @@ namespace RTA.Examples.DataAdapter.GeneratorIndexer
         {
             return new ApplicationBuilder("demo")
             {
-
                 Channels = Schema.Select((row, i) =>
                     new ChannelBuilder(
                         (uint) i,
@@ -235,9 +241,7 @@ namespace RTA.Examples.DataAdapter.GeneratorIndexer
                         MinimumValue = -1500,
                         MaximumValue = +1500
                     }).ToList()
-
             }.BuildConfiguration();
         }
-
     }
 }

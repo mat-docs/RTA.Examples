@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="SignalGenerator.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 
 namespace RTA.Examples.Util
 {
@@ -13,12 +16,12 @@ namespace RTA.Examples.Util
         }
 
         private const int MinComponents = 1;
-        private const int MaxComponents = 3;
-        private const double MinFrequency = 0.01;
-        private const double MaxFrequency = 5000.0;
-        private const double MaxAmplitude = 300.0;
-        private const double MaxValueOffset = 50.0;
-        private const long MaxTimeOffset = 10;
+        private const int MaxComponents = 4;
+        private const double MinFrequency = 0.05;
+        private const double MaxFrequency = 2;
+        private const double MaxAmplitude = 800.0;
+        private const double MaxValueOffset = 100.0;
+        private const long MaxTimeOffset = 1000_000L;
 
         private readonly Component[] components;
 
@@ -27,19 +30,20 @@ namespace RTA.Examples.Util
             components = new Component[rng.Next(MaxComponents - MinComponents + 1) + MinComponents];
 
             var maxAmplitude = MaxAmplitude;
-            var maxFrequency = MaxFrequency;
             for (var i = 0; i < components.Length; i++)
             {
-                var amplitude = maxAmplitude = rng.NextDouble() * maxAmplitude;
-                var frequency = maxFrequency = rng.NextDouble() * (maxFrequency - MinFrequency) + MinFrequency;
+                var amplitude = rng.NextDouble() * maxAmplitude;
+                var frequency = rng.NextDouble() * (MaxFrequency - MinFrequency) + MinFrequency;
 
                 components[i] = new Component
                 {
                     Amplitude = amplitude,
                     IntervalNanos = 1_000_000_000L / frequency,
-                    TimeOffsetNanos = rng.NextDouble() * (MaxTimeOffset * 1000_000_000L),
+                    TimeOffsetNanos = rng.NextDouble() * (MaxTimeOffset + 1000_000_000L),
                     ValueOffset = rng.NextDouble() * (MaxValueOffset * 2) - MaxValueOffset
                 };
+
+                maxAmplitude /= 2.0;
             }
         }
 
@@ -52,7 +56,7 @@ namespace RTA.Examples.Util
                 {
                     var component = components[i];
                     var fraction = (timeNanos + component.TimeOffsetNanos) / component.IntervalNanos;
-                    var value = Math.Sin(2 * Math.PI * fraction) * component.Amplitude + component.ValueOffset;
+                    var value = Math.Sin(fraction * (2 * Math.PI)) * component.Amplitude + component.ValueOffset;
                     signal += value;
                 }
 
