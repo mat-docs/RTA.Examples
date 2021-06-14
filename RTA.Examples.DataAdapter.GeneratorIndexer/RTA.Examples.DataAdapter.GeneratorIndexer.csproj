@@ -7,7 +7,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="2.0.0-CI-20210611-195659" />
+		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="2.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>

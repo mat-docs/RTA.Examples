@@ -7,8 +7,8 @@
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="5.0.6" />
 		<PackageReference Include="Microsoft.Data.Sqlite.Core" Version="5.0.6" />
-		<PackageReference Include="MAT.OCS.RTA.Services.AspNetCore" Version="2.0.0-CI-20210611-195659" />
-		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="2.0.0-CI-20210611-195659" />
+		<PackageReference Include="MAT.OCS.RTA.Services.AspNetCore" Version="2.0.0" />
+		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="2.0.0" />
 	</ItemGroup>
 
 </Project>
