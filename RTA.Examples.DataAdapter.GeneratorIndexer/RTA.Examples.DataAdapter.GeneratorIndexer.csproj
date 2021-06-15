@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
@@ -7,7 +7,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="0.7.0-CI-20210603-175800" />
+		<PackageReference Include="MAT.OCS.RTA.Toolkit.API.GrpcClients" Version="2.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>

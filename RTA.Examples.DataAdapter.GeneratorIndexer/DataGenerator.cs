@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="DataGenerator.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -154,8 +157,8 @@ CREATE TABLE [samples_50](
 
             for (long t = startMillis, endTime = startMillis + durationMillis; t < endTime; t += intervalMillis)
             {
-                var ns = t * 1_000_000L;
-                yield return (t, signals[0][ns], signals[1][ns], signals[2][ns]);
+                var nsOffset = (t - startMillis) * 1_000_000L;
+                yield return (t, signals[0][nsOffset], signals[1][nsOffset], signals[2][nsOffset]);
             }
         }
     }

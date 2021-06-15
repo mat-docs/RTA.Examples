@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="DemoSampleDataStore.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;

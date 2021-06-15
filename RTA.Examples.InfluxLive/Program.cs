@@ -1,4 +1,7 @@
-﻿using System;
+﻿// <copyright file="Program.cs" company="McLaren Applied Ltd.">
+// Copyright (c) McLaren Applied Ltd.</copyright>
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,11 +14,10 @@ using Google.Protobuf;
 using Grpc.Net.Client;
 using MAT.OCS.Configuration;
 using MAT.OCS.Configuration.Builder;
-using MAT.OCS.RTA.Cache;
-using MAT.OCS.RTA.Cache.Redis;
 using MAT.OCS.RTA.Model;
 using MAT.OCS.RTA.Model.Data;
 using MAT.OCS.RTA.Model.Net.Stream;
+using MAT.OCS.RTA.StreamBuffer;
 using MAT.OCS.RTA.Toolkit.API.ConfigService;
 using MAT.OCS.RTA.Toolkit.API.SchemaMappingService;
 using MAT.OCS.RTA.Toolkit.API.SessionService;
@@ -26,7 +28,7 @@ namespace RTA.Examples.InfluxLive
 {
     internal class Program
     {
-        private static readonly string[] Fields = { "alpha", "beta", "gamma" };
+        private static readonly string[] Fields = {"alpha", "beta", "gamma"};
 
         private const string DataBindingSource = "rta-influxdatasvc";
         private const string Database = "rtademo";
@@ -60,7 +62,8 @@ namespace RTA.Examples.InfluxLive
             var durationNanos = TimeSpan.FromMinutes(5).Ticks * 100;
             var intervalNanos = TimeSpan.FromMilliseconds(10).Ticks * 100;
 
-            var dataIdentity = FormatDataIdentity(sessionIdentity);
+            var sessionTag = sessionIdentity;
+            var dataIdentity = FormatDataIdentity(sessionTag);
 
             // publish config as soon as it's known - but session can be published first
             // and bound to config later if config takes some time to resolve in your environment
@@ -79,7 +82,7 @@ namespace RTA.Examples.InfluxLive
             try
             {
                 await WriteDataAsync(
-                    influxUri, sessionClient, session, dataIdentity,
+                    influxUri, sessionClient, session, sessionTag,
                     startNanos, durationNanos, intervalNanos, cts.Token);
             }
             catch (Exception)
@@ -111,145 +114,169 @@ namespace RTA.Examples.InfluxLive
             Console.WriteLine();
         }
 
-        private static string FormatDataIdentity(string sessionIdentity)
+        private static string FormatDataIdentity(string sessionTag)
         {
-            return $"{SessionTag}='{sessionIdentity}'";
+            return $"{SessionTag}='{sessionTag}'";
         }
 
         private static async Task WriteDataAsync(
             Uri influxDbUri,
             SessionStore.SessionStoreClient sessionClient,
             Session session,
-            string sessionTagExpression,
+            string sessionTag,
             long startNanos,
             long durationNanos,
             long intervalNanos,
             CancellationToken ct)
         {
-            using var redisBuffer = new RedisStreamCache("localhost", 0);
+            using var redisBuffer = new RedisStreamBuffer("localhost", 0);
             var streamBuffer = await redisBuffer.InitStreamSessionAsync(session.Identity, RedisStreamName);
 
             await streamBuffer.WriteSessionJsonAsync(session);
-
-            var writeUri = new UriBuilder(influxDbUri)
+            
+            var sampleCount = 0;
+            var timestampsBuffer = new long[SamplesPerBurst];
+            var valuesBuffers = new double[Fields.Length][];
+            for (var f = 0; f < Fields.Length; f++)
             {
-                Path = "/write",
-                Query = $"db={Database}"
-            }.Uri;
-
-            // note that longer sessions may need to be split into multiple requests
-            var request = (HttpWebRequest)WebRequest.Create(writeUri);
-            request.Method = "POST";
-            request.SendChunked = true;
-
-            await using (var stream = await request.GetRequestStreamAsync())
-            await using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" })
-            {
-                var sampleCount = 0;
-                var timestampsBuffer = new long[SamplesPerBurst];
-                var valuesBuffers = new double[Fields.Length][];
-                for (var f = 0; f < Fields.Length; f++)
-                {
-                    valuesBuffers[f] = new double[SamplesPerBurst];
-                }
-
-                var lastStreamWrite = Task.CompletedTask;
-                var lineBuffer = new StringBuilder();
-                foreach (var (timestamp, values) in GenerateData(startNanos, durationNanos, intervalNanos))
-                {
-                    lineBuffer.Append(Measurement);
-                    lineBuffer.Append(',');
-                    lineBuffer.Append(sessionTagExpression);
-                    lineBuffer.Append(' ');
-
-                    for (var f = 0; f < Fields.Length; f++)
-                    {
-                        if (f > 0)
-                        {
-                            lineBuffer.Append(',');
-                        }
-
-                        lineBuffer.Append(Fields[f]);
-                        lineBuffer.Append('=');
-                        lineBuffer.Append(values[f]);
-
-                        valuesBuffers[f][sampleCount] = values[f];
-                    }
-
-                    lineBuffer.Append(' ');
-                    lineBuffer.Append(timestamp);
-
-                    timestampsBuffer[sampleCount] = timestamp;
-
-                    await writer.WriteLineAsync(lineBuffer);
-                    lineBuffer.Clear();
-
-                    sampleCount++;
-
-                    // aim to update the stream at around 10Hz
-                    // and consider transfer efficiency by avoiding lots of tiny updates
-                    if (sampleCount == SamplesPerBurst)
-                    {
-                        await lastStreamWrite;
-                        lastStreamWrite = WriteStreamBurstAsync(
-                            streamBuffer, startNanos, timestamp, timestampsBuffer, valuesBuffers, sampleCount);
-
-                        sampleCount = 0;
-                    }
-
-                    if (((timestamp - startNanos) % 1_000_000_000L) == 0)
-                    {
-                        // is not necessary to keep updating the streamed session JSON if the only change is time range
-                        // but make sure time range on the JSON is accurate if it is republished to update other metadata
-
-                        // session service should be updated fairly regularly (e.g. 1Hz - 0.1Hz)
-                        // so users can see progress when browsing sessions
-                        await sessionClient.CreateOrUpdateSessionAsync(new CreateOrUpdateSessionRequest
-                        {
-                            Identity = session.Identity,
-                            Updates =
-                            {
-                                new SessionUpdate
-                                {
-                                    ExtendTimeRange = new()
-                                    {
-                                        StartTime = startNanos,
-                                        EndTime = timestamp
-                                    }
-                                }
-                            }
-                        });
-
-                        Console.Write(".");
-                    }
-
-                    if (ct.IsCancellationRequested)
-                    {
-                        Console.WriteLine("#");
-                        break;
-                    }
-                }
-
-                // final burst of data
-                await lastStreamWrite;
-                if (sampleCount > 0)
-                {
-                    await WriteStreamBurstAsync(
-                        streamBuffer, startNanos, timestampsBuffer[sampleCount - 1], timestampsBuffer, valuesBuffers, sampleCount);
-                }
-
-                // final update to session model to go into closed state (or truncated if cancelled)
-                // so the client doesn't keep looking for new live data
-                session.State = ct.IsCancellationRequested ? SessionState.Truncated : SessionState.Closed;
-                session.TimeRange = new SessionTimeRange
-                {
-                    StartTime = startNanos,
-                    EndTime = startNanos + durationNanos - intervalNanos
-                };
-                await streamBuffer.WriteSessionJsonAsync(session);
+                valuesBuffers[f] = new double[SamplesPerBurst];
             }
 
-            static async Task WriteStreamBurstAsync(IStreamCacheSessionProducer streamBuffer,
+            var (request, writer) = await BeginInfluxRequestAsync(influxDbUri);
+
+            var lastStreamWrite = Task.CompletedTask;
+            var lineBuffer = new StringBuilder();
+            foreach (var (timestamp, values) in GenerateData(startNanos, durationNanos, intervalNanos))
+            {
+                lineBuffer.Append(Measurement);
+                lineBuffer.Append(',');
+                lineBuffer.Append(SessionTag);
+                lineBuffer.Append('=');
+                lineBuffer.Append(sessionTag);
+
+                lineBuffer.Append(' ');
+
+                for (var f = 0; f < Fields.Length; f++)
+                {
+                    if (f > 0)
+                    {
+                        lineBuffer.Append(',');
+                    }
+
+                    lineBuffer.Append(Fields[f]);
+                    lineBuffer.Append('=');
+                    lineBuffer.Append(values[f]);
+
+                    valuesBuffers[f][sampleCount] = values[f];
+                }
+
+                lineBuffer.Append(' ');
+                lineBuffer.Append(timestamp);
+
+                timestampsBuffer[sampleCount] = timestamp;
+
+                await writer.WriteLineAsync(lineBuffer);
+                lineBuffer.Clear();
+
+                sampleCount++;
+
+                // aim to update the stream at around 10Hz
+                // and consider transfer efficiency by avoiding lots of tiny updates
+                if (sampleCount == SamplesPerBurst)
+                {
+                    await lastStreamWrite;
+                    lastStreamWrite = WriteStreamBurstAsync(
+                        streamBuffer, startNanos, timestamp, timestampsBuffer, valuesBuffers, sampleCount);
+
+                    sampleCount = 0;
+                }
+
+                if (((timestamp - startNanos) % 1_000_000_000L) == 0)
+                {
+                    // start a new InfluxDB write so the data becomes visible
+                    await EndInfluxRequestAsync(request, writer);
+                    (request, writer) = await BeginInfluxRequestAsync(influxDbUri);
+
+                    // is not necessary to keep updating the streamed session JSON if the only change is time range
+                    // but make sure time range on the JSON is accurate if it is republished to update other metadata
+
+                    // session service should be updated fairly regularly (e.g. 1Hz - 0.1Hz)
+                    // so users can see progress when browsing sessions
+                    await sessionClient.CreateOrUpdateSessionAsync(new CreateOrUpdateSessionRequest
+                    {
+                        Identity = session.Identity,
+                        Updates =
+                        {
+                            new SessionUpdate
+                            {
+                                ExtendTimeRange = new()
+                                {
+                                    StartTime = startNanos,
+                                    EndTime = timestamp
+                                }
+                            }
+                        }
+                    });
+
+                    Console.Write(".");
+                }
+
+                if (ct.IsCancellationRequested)
+                {
+                    Console.WriteLine("#");
+                    break;
+                }
+            }
+
+            // final burst of data
+            await lastStreamWrite;
+            if (sampleCount > 0)
+            {
+                await WriteStreamBurstAsync(
+                    streamBuffer, startNanos, timestampsBuffer[sampleCount - 1], timestampsBuffer, valuesBuffers,
+                    sampleCount);
+            }
+
+            // flush remaining InfluxDB data
+            await EndInfluxRequestAsync(request, writer);
+
+            // final update to session model to go into closed state (or truncated if cancelled)
+            // so the client doesn't keep looking for new live data
+            session.State = ct.IsCancellationRequested ? SessionState.Truncated : SessionState.Closed;
+            session.TimeRange = new SessionTimeRange
+            {
+                StartTime = startNanos,
+                EndTime = startNanos + durationNanos - intervalNanos
+            };
+            await streamBuffer.WriteSessionJsonAsync(session);
+
+            static async Task<(HttpWebRequest Request, StreamWriter Writer)> BeginInfluxRequestAsync(Uri influxDbUri)
+            {
+                var writeUri = new UriBuilder(influxDbUri)
+                {
+                    Path = "/write",
+                    Query = $"db={Database}"
+                }.Uri;
+
+                var request = (HttpWebRequest)WebRequest.Create(writeUri);
+                request.Method = "POST";
+                request.SendChunked = true;
+
+                var stream = await request.GetRequestStreamAsync();
+                var writer = new StreamWriter(stream, new UTF8Encoding(false)) {NewLine = "\n"};
+
+                return (request, writer);
+            }
+
+            static async Task EndInfluxRequestAsync(HttpWebRequest request, StreamWriter writer)
+            {
+                await writer.FlushAsync();
+                await writer.DisposeAsync();
+
+                using var response = await request.GetResponseAsync();
+            }
+
+            static async Task WriteStreamBurstAsync(IStreamBufferSessionProducer streamBuffer,
                 long startTime, long endTime, long[] timestampsBuffer, double[][] valuesBuffers, int sampleCount)
             {
                 // stream data in bursts for transfer efficiency
@@ -260,7 +287,7 @@ namespace RTA.Examples.InfluxLive
                 {
                     var tData = new TimestampedData
                     {
-                        ChannelId = (uint)f,
+                        ChannelId = (uint) f,
                         Buffer = ByteString.CopyFrom(MemoryMarshal.AsBytes(valuesBuffers[f].AsSpan(0, sampleCount)))
                     };
                     tData.SetTimestamps(timestampsBuffer);
@@ -283,8 +310,6 @@ namespace RTA.Examples.InfluxLive
 
                 await streamBuffer.WriteAsync(burst);
             }
-            
-            using var response = await request.GetResponseAsync();
 
             // mark session as closed only after data is fully flushed where feasible
             // to avoid clients seeing the session as complete when data is still not written
@@ -304,7 +329,7 @@ namespace RTA.Examples.InfluxLive
                     },
                     new SessionUpdate
                     {
-                        SetState = (int)session.State
+                        SetState = (int) session.State
                     },
                     new SessionUpdate
                     {
@@ -332,7 +357,7 @@ namespace RTA.Examples.InfluxLive
                 var values = new double[Fields.Length];
                 for (var f = 0; f < values.Length; f++)
                 {
-                    values[f] = signals[f][t];
+                    values[f] = signals[f][t - startNanos];
                 }
 
                 yield return (t, values);
@@ -383,11 +408,11 @@ namespace RTA.Examples.InfluxLive
 
             for (var f = 0; f < Fields.Length; f++)
             {
-                channels[f] = new ChannelBuilder((uint)f, 0L, DataType.Double64Bit, ChannelDataSource.Timestamped);
+                channels[f] = new ChannelBuilder((uint) f, 0L, DataType.Double64Bit, ChannelDataSource.Timestamped);
 
                 parameters[f] = new ParameterBuilder($"{Fields[f]}:demo", Fields[f], $"{Fields[f]} field")
                 {
-                    ChannelIds = { (uint)f },
+                    ChannelIds = {(uint) f},
                     MinimumValue = -1500,
                     MaximumValue = +1500
                 };
@@ -419,7 +444,6 @@ namespace RTA.Examples.InfluxLive
             string configIdentifier)
         {
             var identifier = $"Influx Live Demo {timestamp:f}";
-            const SessionState state = SessionState.Open;
 
             await sessionClient.CreateOrUpdateSessionAsync(new CreateOrUpdateSessionRequest
             {
@@ -427,13 +451,14 @@ namespace RTA.Examples.InfluxLive
                 CreateIfNotExists = new CreateOrUpdateSessionRequest.Types.CreateIfNotExists
                 {
                     Identifier = identifier,
-                    Timestamp = timestamp.ToString("O")
+                    Timestamp = timestamp.ToString("O"),
+                    State = (int) SessionState.Open
                 },
                 Updates =
                 {
                     new SessionUpdate
                     {
-                        SetState = (int) state
+                        SetType = "influx"
                     },
                     new SessionUpdate
                     {
@@ -443,7 +468,7 @@ namespace RTA.Examples.InfluxLive
                             {
                                 new ConfigBinding
                                 {
-                                    ConfigIdentifier = configIdentifier
+                                    Identifier = configIdentifier
                                 }
                             }
                         }
@@ -470,12 +495,12 @@ namespace RTA.Examples.InfluxLive
 
             return new Session(sessionIdentity, SessionState.Open, timestamp, identifier)
             {
+                Type = "influx",
                 ConfigBindings = new List<SessionConfigBinding>
                 {
                     new SessionConfigBinding(configIdentifier, 0u)
                 }
             };
         }
-
     }
 }
