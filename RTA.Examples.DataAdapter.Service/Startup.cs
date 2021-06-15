@@ -33,8 +33,7 @@ namespace RTA.Examples.DataAdapter.Service
             services.AddTransient<ISampleDataStore, DemoSampleDataStore>();
 
             services.AddControllers();
-            services.AddRTAFormatters();
-            services.AddRTAResponseCompression();
+            services.AddRTA();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
