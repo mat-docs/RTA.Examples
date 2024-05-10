@@ -201,7 +201,7 @@ namespace RTA.Examples.Loader
             // In this change:
             //  -- each session has an increasing number of markers, i.e. 2, 3, 4, 5, ... etc.
             //  -- each lap/marker has different id and label values correspondingly.
-            //  -- the StartTime and EndTime of each marker is calculated in the ay that the laps are evenly divided for the whole timeline
+            //  -- the StartTime and EndTime of each marker is calculated in the way that the laps are evenly divided for the whole timeline
             //     (again, this is merely for 'facilitating' testing in A10, when a session is loaded)
             //  -- the markers firstly are generated as a list of them, and then the list is added to the session in question.
             // 
