@@ -4,9 +4,11 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+
 using MAT.OCS.Configuration;
 using MAT.OCS.Configuration.Builder;
 using MAT.OCS.RTA.Model.Data;
@@ -14,8 +16,6 @@ using MAT.OCS.RTA.Model.Net;
 using MAT.OCS.RTA.Toolkit.API.ConfigService;
 using MAT.OCS.RTA.Toolkit.API.DataService;
 using MAT.OCS.RTA.Toolkit.API.SessionService;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Serialization;
 using RTA.Examples.Util;
 using static MAT.OCS.RTA.Toolkit.API.SessionService.SessionUpdate.Types;
 
@@ -24,15 +24,17 @@ namespace RTA.Examples.Loader
     public class Program
     {
         private static readonly string[] Fields = {"alpha", "beta", "gamma"};
-        private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
-        {
-            ContractResolver = new DefaultContractResolver
-            {
-                NamingStrategy = new CamelCaseNamingStrategy(false, false),
-            },
-            DateParseHandling = DateParseHandling.DateTimeOffset
-        };
 
+        //-----------------------------------------------------------------------------------------------------------------------------
+        // This program is an example of how to create few records of RTA sessions in the Postgres DB by utilizing the OCS.RTA.Toolkit,
+        // namely its Rest Api web services, which write the sample data into the DB and associated 'data chuncks' files.
+        // The data in question are RTA sessions and its Laps (called 'markers' here), which are linked to each sessions.
+        // They are handled by using SessionStore service. See also WriteSessionAsync().
+        // It also creates a session configuration data, which is stored in a Json file.
+        // This is handled by ConfigStore service. See also WriteConfigAsync() method.
+        // Finally, it generates sample 'data chuncks' files to simulates the data which represents session parameters.
+        // This is handeld by the DataWriter. See also WriteDataAsync() method.
+        //-----------------------------------------------------------------------------------------------------------------------------
         public static async Task Main(string[] args)
         {
             using var channel = GrpcChannel.ForAddress("http://localhost:8082");
@@ -45,8 +47,13 @@ namespace RTA.Examples.Loader
             var durationNanos = TimeSpan.FromMinutes(10).Ticks * 100;
             var intervalNanos = TimeSpan.FromMilliseconds(10).Ticks * 100;
 
-            var configIdentifier = await WriteConfigAsync(configClient, intervalNanos);     // "6D711DBC-5F0D-47D2-B127-8C9D20BCEC02"
+            var configIdentifier = await WriteConfigAsync(configClient, intervalNanos);
 
+            // This is the main change here:
+            // 1) creates 9 sessions (where '9' is an arbitrary constant, good enough for testing purpose);
+            // 2) creates 'data chuncks' files assiciated with each session;
+            // 3) and links the lap/marker sample data for each session (this is done inside of WriteSessionAsync() call)
+            //
             const int sessionInTotal = 9;
             for (int sessionNumber = 1; sessionNumber <= sessionInTotal; sessionNumber++)
             {
@@ -190,6 +197,14 @@ namespace RTA.Examples.Loader
         {
             var lapChunk = durationNanos / (sessionNumber + 1);            // 1e9 * 60 = 60000000000
 
+            // This is another major change here, which implements how to add Laps/Markers to each session.
+            // In this change:
+            //  -- each session has an increasing number of markers, i.e. 2, 3, 4, 5, ... etc.
+            //  -- each lap/marker has different id and label values correspondingly.
+            //  -- the StartTime and EndTime of each marker is calculated in the ay that the laps are evenly divided for the whole timeline
+            //     (again, this is merely for 'facilitating' testing in A10, when a session is loaded)
+            //  -- the markers firstly are generated as a list of them, and then the list is added to the session in question.
+            // 
             var newMarkerList = new MarkersList();
 
             for (int i = 1;  i <= sessionNumber; i++)
