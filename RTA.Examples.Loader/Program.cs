@@ -3,7 +3,6 @@
 
 using System;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
@@ -15,13 +14,24 @@ using MAT.OCS.RTA.Model.Net;
 using MAT.OCS.RTA.Toolkit.API.ConfigService;
 using MAT.OCS.RTA.Toolkit.API.DataService;
 using MAT.OCS.RTA.Toolkit.API.SessionService;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 using RTA.Examples.Util;
+using static MAT.OCS.RTA.Toolkit.API.SessionService.SessionUpdate.Types;
 
 namespace RTA.Examples.Loader
 {
     public class Program
     {
         private static readonly string[] Fields = {"alpha", "beta", "gamma"};
+        private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
+        {
+            ContractResolver = new DefaultContractResolver
+            {
+                NamingStrategy = new CamelCaseNamingStrategy(false, false),
+            },
+            DateParseHandling = DateParseHandling.DateTimeOffset
+        };
 
         public static async Task Main(string[] args)
         {
@@ -30,23 +40,25 @@ namespace RTA.Examples.Loader
             var configClient = new ConfigStore.ConfigStoreClient(channel);
             var dataClient = new DataWriter.DataWriterClient(channel);
 
-            var dataIdentity = Guid.NewGuid().ToString();
             var timestamp = DateTimeOffset.Now;
             var startNanos = (timestamp.ToUniversalTime() - DateTimeOffset.UnixEpoch).Ticks * 100;
             var durationNanos = TimeSpan.FromMinutes(10).Ticks * 100;
             var intervalNanos = TimeSpan.FromMilliseconds(10).Ticks * 100;
 
-            await WriteDataAsync(
-                dataClient, dataIdentity, startNanos, durationNanos, intervalNanos);
+            var configIdentifier = await WriteConfigAsync(configClient, intervalNanos);     // "6D711DBC-5F0D-47D2-B127-8C9D20BCEC02"
 
-            var configIdentifier = await WriteConfigAsync(
-                configClient, intervalNanos);
+            const int sessionInTotal = 9;
+            for (int sessionNumber = 1; sessionNumber <= sessionInTotal; sessionNumber++)
+            {
+                var dataIdentity = Guid.NewGuid().ToString();
 
-            await WriteSessionAsync(
-                sessionClient, dataIdentity,
-                timestamp, startNanos, durationNanos, intervalNanos, configIdentifier);
+                await WriteDataAsync(dataClient, dataIdentity, startNanos, durationNanos, intervalNanos);
 
-            Console.WriteLine(dataIdentity);
+                await WriteSessionAsync(sessionClient, dataIdentity, timestamp, startNanos, durationNanos, intervalNanos,
+                                        configIdentifier, sessionNumber);
+
+                Console.WriteLine(dataIdentity);
+            }
         }
 
         private static async Task WriteDataAsync(
@@ -58,45 +70,54 @@ namespace RTA.Examples.Loader
         {
             var rng = new Random();
             var signals = new SignalGenerator[Fields.Length];
+
             for (var f = 0; f < signals.Length; f++)
+            {
                 signals[f] = new SignalGenerator(rng);
+            }
 
             const int burstLength = 100;
             var burstSamples = new short[burstLength];
 
             using var dataStream = dataClient.WriteDataStream();
+
             var requestStream = dataStream.RequestStream;
             var responseStream = dataStream.ResponseStream;
 
-            await requestStream.WriteAsync(new WriteDataStreamMessage
-            {
-                DataIdentity = dataIdentity
-            });
+            await requestStream.WriteAsync
+                (new WriteDataStreamMessage
+                    {
+                        DataIdentity = dataIdentity
+                    }
+                );
 
             for (var offset = 0L; offset < durationNanos; offset += burstLength * intervalNanos)
             {
                 for (var f = 0; f < signals.Length; f++)
                 {
                     var signal = signals[f];
+
                     for (var t = 0; t < burstLength; t++)
                     {
                         var timeOffsetNanos = offset + t * intervalNanos;
-                        burstSamples[t] = (short) signal[timeOffsetNanos]; // short precision for this demo
+                        burstSamples[t] = (short)signal[timeOffsetNanos]; // short precision for this demo
                     }
 
                     var burst = new PeriodicData
                     {
-                        ChannelId = (uint) f,
+                        ChannelId = (uint)f,
                         StartTimestamp = startNanos + offset,
                         Interval = intervalNanos,
                         Samples = burstLength,
                         Buffer = ByteString.CopyFrom(MemoryMarshal.AsBytes(burstSamples.AsSpan()))
                     };
 
-                    await requestStream.WriteAsync(new WriteDataStreamMessage
-                    {
-                        PeriodicData = burst
-                    });
+                    await requestStream.WriteAsync
+                        (new WriteDataStreamMessage
+                            {
+                                PeriodicData = burst
+                            }
+                        );
                 }
 
                 if ((offset % 1_000_000_000L) == 0)
@@ -127,12 +148,11 @@ namespace RTA.Examples.Loader
 
             for (var f = 0; f < Fields.Length; f++)
             {
-                channels[f] = new ChannelBuilder((uint) f, intervalNanos, DataType.Signed16Bit,
-                    ChannelDataSource.Periodic);
+                channels[f] = new ChannelBuilder((uint)f, intervalNanos, DataType.Signed16Bit, ChannelDataSource.Periodic);
 
                 parameters[f] = new ParameterBuilder($"{Fields[f]}:demo", Fields[f], $"{Fields[f]} field")
                 {
-                    ChannelIds = {(uint) f},
+                    ChannelIds = {(uint)f},
                     MinimumValue = -1500,
                     MaximumValue = +1500
                 };
@@ -165,46 +185,95 @@ namespace RTA.Examples.Loader
             long startNanos,
             long durationNanos,
             long intervalNanos,
-            string configIdentifier)
+            string configIdentifier,
+            int sessionNumber)
         {
-            await sessionClient.CreateOrUpdateSessionAsync(new CreateOrUpdateSessionRequest
+            var lapChunk = durationNanos / (sessionNumber + 1);            // 1e9 * 60 = 60000000000
+
+            var newMarkerList = new MarkersList();
+
+            for (int i = 1;  i <= sessionNumber; i++)
             {
-                Identity = dataIdentity,
-                CreateIfNotExists = new()
+                var m1 = new Marker
                 {
-                    Identifier = $"Data Service Demo {timestamp:f}",
-                    Timestamp = timestamp.ToString("O")
-                },
-                Updates =
-                {
-                    new SessionUpdate
+                    Id = i.ToString(),
+                    Type = "Test",
+                    Label = "Test Label" + i.ToString(),
+                    StartTime = startNanos + (i - 1) * lapChunk,
+                    EndTime = startNanos + i * lapChunk,
+                    DetailsJson = ""
+                };
+                newMarkerList.Markers.Add(m1);
+            }
+            var m2 = new Marker
+            {
+                Id = (sessionNumber + 1).ToString(),
+                Type = "Test",
+                Label = "Test Label" + (sessionNumber + 1).ToString(),
+                StartTime = startNanos + sessionNumber * lapChunk,
+                EndTime = startNanos + (sessionNumber + 1) * lapChunk,
+                DetailsJson = ""
+            };
+            newMarkerList.Markers.Add(m2);
+
+            await sessionClient.CreateOrUpdateSessionAsync
+                (
+                    new CreateOrUpdateSessionRequest
                     {
-                        SetType = "rta"
-                    },
-                    new SessionUpdate
-                    {
-                        // inclusive timestamps
-                        SetTimeRange = new()
+                        Identity = dataIdentity,
+                        CreateIfNotExists = new()
                         {
-                            StartTime = startNanos,
-                            EndTime = startNanos + durationNanos - intervalNanos
-                        }
-                    },
-                    new SessionUpdate
-                    {
-                        SetConfigBindings = new()
+                            Identifier = $"Session {sessionNumber} for Data Service Demo {timestamp:f}",
+                            Timestamp = timestamp.ToString("O")
+                        },
+                        Updates =
                         {
-                            ConfigBindings =
+                            new SessionUpdate
                             {
-                                new ConfigBinding
+                                SetType = "rta"
+                            },
+                            new SessionUpdate
+                            {
+                                // inclusive timestamps
+                                SetTimeRange = new()
                                 {
-                                    Identifier = configIdentifier
+                                    StartTime = startNanos,
+                                    EndTime = startNanos + durationNanos - intervalNanos
+                                }
+                            },
+                            new SessionUpdate
+                            {
+                                SetConfigBindings = new()
+                                {
+                                    ConfigBindings =
+                                    {
+                                        new ConfigBinding
+                                        {
+                                            Identifier = configIdentifier
+                                        }
+                                    }
+                                }
+                            },
+                            new SessionUpdate
+                            {
+                                UpdateMarkers = new SessionUpdate.Types.MarkersMap
+                                {
+                                    MarkersByCategory =
+                                    {
+                                        ["Laps"] = newMarkerList
+                                    }
+                                }
+                            },
+                            new SessionUpdate
+                            {
+                                UpdateDetailsJson = new DetailsJson
+                                {
+                                    Json = "{\"Number\":" + sessionNumber+"}"
                                 }
                             }
-                        }
+                        },
                     }
-                }
-            });
+                );
         }
     }
 }
