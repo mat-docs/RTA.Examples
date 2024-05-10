@@ -49,7 +49,7 @@ namespace RTA.Examples.Loader
 
             var configIdentifier = await WriteConfigAsync(configClient, intervalNanos);
 
-            // This is the main change here:
+            // At this point we create a set of sample sessions:
             // 1) creates 9 sessions (where '9' is an arbitrary constant, good enough for testing purpose);
             // 2) creates 'data chuncks' files assiciated with each session;
             // 3) and links the lap/marker sample data for each session (this is done inside of WriteSessionAsync() call)
@@ -197,7 +197,7 @@ namespace RTA.Examples.Loader
         {
             var lapChunk = durationNanos / (sessionNumber + 1);            // 1e9 * 60 = 60000000000
 
-            // This is another major change here, which implements how to add Laps/Markers to each session.
+            // This part implements how to add Laps/Markers to each session.
             // In this change:
             //  -- each session has an increasing number of markers, i.e. 2, 3, 4, 5, ... etc.
             //  -- each lap/marker has different id and label values correspondingly.
